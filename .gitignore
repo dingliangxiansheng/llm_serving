@@ -1,6 +1,6 @@
 # 忽略规则（权重 21GB、虚拟环境、运行数据都不入库）
 weight/
-*.CLAUDE.md
+CLAUDE.md
 *.safetensors
 *.bin
 *.pt
