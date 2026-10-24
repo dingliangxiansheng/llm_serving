@@ -104,7 +104,7 @@ VACUUM;
 
 ## 5.1 页面署名与自定义样式
 
-页面右下角那行「作者：丁亮 · 仅供本次演示使用」来自 `webui/branding/custom.css`，
+页面右下角那行「作者：丁亮 」来自 `webui/branding/custom.css`，
 它被复制到 Open WebUI 的 `open_webui/frontend/static/custom.css`——这是 Open WebUI 官方留的样式入口
 （`/static/custom.css`），不需要改前端构建产物，也不需要重新打镜像。
 

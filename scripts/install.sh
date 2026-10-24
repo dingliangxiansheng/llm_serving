@@ -45,7 +45,7 @@ fi
 log "安装 open-webui（较大，约 1GB）"
 "$UV_BIN" pip install --python .venv-webui/bin/python open-webui 2>&1 | tail -3
 
-# 站点署名（作者：丁亮 · 仅供本次演示使用）——写进 Open WebUI 的 static/custom.css
+# 站点署名（作者：丁亮 ）——写进 Open WebUI 的 static/custom.css
 bash ./scripts/patch_webui_branding.sh 2>/dev/null \
     || log "[!] 署名样式安装失败（不影响使用，可稍后执行 bash scripts/patch_webui_branding.sh）"
 

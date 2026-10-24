@@ -49,7 +49,7 @@ llm_serving/
 │   ├── Dockerfile.gateway    # 轻量 python:3.12-slim
 │   ├── Dockerfile.weights    # 权重下载器（modelscope，单独镜像）
 │   └── scripts/              # 三个容器入口脚本
-├── webui/branding/custom.css # 页面署名（作者：丁亮 · 仅供本次演示使用）
+├── webui/branding/custom.css # 页面署名（作者：丁亮 ）
 ├── docker-compose.yml        # vllm + gateway + open-webui 一键起
 ├── docs/
 │   ├── deployment-checklist.md  # ★ 上线前必读的注意事项清单
@@ -187,7 +187,7 @@ bash scripts/stop_all.sh --gpu    # 全部停止并确认显存释放
 
 ## 页面署名
 
-页面右下角有一行小字 **「作者：丁亮 · 仅供本次演示使用」**，来源是 `webui/branding/custom.css`：
+页面右下角有一行小字 **「作者：丁亮 」**，来源是 `webui/branding/custom.css`：
 
 ```bash
 make branding                  # 本机 venv 部署：装进 .venv-webui 里 Open WebUI 的 static/custom.css
