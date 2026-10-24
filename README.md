@@ -35,6 +35,7 @@ llm_serving/
 │   └── __main__.py           # python -m gateway
 ├── configs/gateway.yaml      # 网关基线配置（可被 QIANWEN_* 环境变量覆盖）
 ├── scripts/
+│   ├── bootstrap.sh          # ★ 一键准备：体检 + 建 venv + 下权重（容器内可跑）
 │   ├── install.sh            # 建 venv 装依赖（uv）
 │   ├── start_vllm.sh         # 启动 vLLM（自动按空闲显存下调 util）
 │   ├── start_gateway.sh      # 启动网关
@@ -98,6 +99,9 @@ make weight-check     # 只校验 ./weight 下是否完整，不下载
 ./scripts/docker_up.sh --no-weight     # 权重已就位时跳过下载
 ```
 
+没有 docker 时（比如在本机容器里）脚本会自动改用本机的 `.venv-weights`（只装 modelscope 的小环境）
+直接下载，效果一样，结果同样落在 `./weight/`。
+
 实现方式：`docker/Dockerfile.weights` 做一个只装 modelscope 的下载器镜像，运行时把宿主机
 `./weight` bind-mount 进去，所以下载结果直接落在宿主机上，21 GB 权重也不会进 vLLM 镜像。
 中断后重跑会逐文件续传；下载完会校验 `config.json` / `index.json` / 每个分片大小，防止半截权重。
@@ -122,16 +126,27 @@ docker compose down               # 停止（保留数据卷）
 
 ---
 
-## 快速开始（不用 Docker，直接跑在宿主机）
+## 快速开始（容器内 / 裸机，一条命令）
 
-系统 python 是 3.10 且没有 `ensurepip`，所以这里用 `uv` 建独立环境：
+不需要 docker、不需要 root（系统 python 是 3.10 且没有 `ensurepip`，脚本用 `uv` 建独立环境）：
 
 ```bash
 git clone https://github.com/dingliangxiansheng/llm_serving.git
 cd llm_serving
 
+bash scripts/bootstrap.sh            # 体检 -> 建 3 个 venv -> 下 21GB 权重（已就位则跳过）
+bash scripts/bootstrap.sh --start    # 想一步到位：装完直接后台拉起 vLLM + 网关 + WebUI
+bash scripts/bootstrap.sh --check    # 只体检（uv/venv/权重/GPU/磁盘），不做任何修改
+bash scripts/bootstrap.sh --no-weight  # 只要环境，权重另想办法（离线拷贝等）
+```
+
+权重下载会自动选择方式：**有 docker 用下载器容器，没有 docker 用本机 `.venv-weights`**
+（只装 modelscope，不污染其它环境），中断后重跑逐文件续传。等价的手工步骤：
+
+```bash
 ./scripts/install.sh              # 建 .venv-vllm(3.12) / .venv-gateway(3.12) / .venv-webui(3.11)
 cp .env.example .env              # 按需修改
+./scripts/fetch_weight.sh         # 下权重（容器内自动 --local 模式）
 
 bash scripts/start_all.sh         # 一键：vLLM → 网关 → Open WebUI，并等到都就绪
 bash scripts/smoke_test.sh        # 端到端验证（可选）

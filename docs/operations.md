@@ -13,6 +13,29 @@ cd llm_serving
 
 ---
 
+## 0.1 一键准备（容器内也能跑）
+
+首次拿到代码，一条命令把环境与权重都准备好，不需要 docker、不需要 root：
+
+```bash
+bash scripts/bootstrap.sh            # 体检 -> 建 3 个 venv -> 下 21GB 权重（已就位则跳过）
+bash scripts/bootstrap.sh --start    # 装完直接后台拉起整套（含等待就绪）
+bash scripts/bootstrap.sh --check    # 只体检：uv / venv / 权重 / GPU 空闲 / 磁盘
+bash scripts/bootstrap.sh --no-weight  # 只装环境（权重走离线拷贝时用）
+```
+
+各步骤也可单独跑：`./scripts/install.sh`（venv）、`./scripts/fetch_weight.sh`（权重，
+容器内自动切到本机 `.venv-weights` 模式）、`./scripts/start_all.sh`（启动）。
+
+排障要点：
+
+| 现象 | 原因 / 处理 |
+| --- | --- |
+| `找不到 uv` | `curl -LsSf https://astral.sh/uv/install.sh | sh`，或设 `UV_BIN=<绝对路径>` |
+| 权重只下了半截 | 直接重跑 `fetch_weight.sh`，modelscope 逐文件续传；`--check` 可先验完整性 |
+| `python -m modelscope` 报没有 `__main__` | modelscope 只提供 console script，脚本用的是 `.venv-weights/bin/modelscope` |
+| 体检显示 GPU 空闲不足 8GB | 宿主机别处占着显存，见 `deployment-checklist.md` 第 1 节 |
+
 ## 1. 启停
 
 ```bash

@@ -3,10 +3,13 @@
 SHELL := /usr/bin/env bash
 PY := .venv-gateway/bin/python
 
-.PHONY: help install test lint check-paths weight weight-check branding up down logs ps smoke run stop venv
+.PHONY: help setup install test lint check-paths weight weight-check branding up down logs ps smoke run stop venv
 
 help: ## 显示所有目标
 	@grep -hE '^[a-zA-Z_]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-10s\033[0m %s\n", $$1, $$2}'
+
+setup: ## 一键准备（体检 + 建 venv + 下权重；容器内可跑，不需要 docker）
+	./scripts/bootstrap.sh
 
 install: ## 建 venv 并安装全部依赖（uv）
 	./scripts/install.sh

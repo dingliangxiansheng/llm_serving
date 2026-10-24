@@ -27,9 +27,7 @@ PATTERN="${_P_DATA}|${_P_HOME}|${_P_MNT}"
 
 HITS="$(grep -rInE "$PATTERN" . \
   --exclude-dir=.git \
-  --exclude-dir=.venv-vllm \
-  --exclude-dir=.venv-gateway \
-  --exclude-dir=.venv-webui \
+  --exclude-dir='.venv-*' \
   --exclude-dir=weight \
   --exclude-dir=logs \
   --exclude-dir=data \

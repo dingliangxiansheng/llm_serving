@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # =============================================================================
-# 下载模型权重到宿主机 ./weight/<模型名>（用 modelscope，走「下载器容器」）
-#
-# 为什么用容器下：docker build 无法往宿主机写文件，所以把下载器做成镜像，
-# 运行时 bind-mount 宿主机目录，结果直接落在宿主机上，且能跟着 compose 一起编排。
+# 下载模型权重到 ./weight/<模型名>（modelscope），自动选择下载方式：
+#   · 有 docker     → 用「下载器容器」（镜像里只装 modelscope，bind-mount ./weight，结果直接落盘）
+#   · 没有 docker   → 用本机 venv（自动建 .venv-weights，只装 modelscope）直接下载
+#     容器里跑就用这条路径：不需要 docker，也不需要 root。
 # 已有完整权重时会自动跳过；中断后重跑会逐文件续传。
 #
 # 用法：
-#   bash scripts/fetch_weight.sh              # 下载（已完整则跳过）+ 构建下载器镜像
+#   bash scripts/fetch_weight.sh              # 下载（已完整则跳过），自动选容器/本机
+#   bash scripts/fetch_weight.sh --local      # 强制用本机 venv 下载（容器内推荐）
 #   bash scripts/fetch_weight.sh --check      # 只校验现有权重完整性，不下载
 #   bash scripts/fetch_weight.sh --force      # 忽略已存在文件，强制重新下载
 #   bash scripts/fetch_weight.sh --no-build   # 不重建下载器镜像（镜像已存在时更快）
@@ -24,12 +25,14 @@ cd "$ROOT_DIR"
 FORCE=0
 CHECK_ONLY=0
 NO_BUILD=0
+LOCAL=0
 for arg in "$@"; do
     case "$arg" in
         --force) FORCE=1 ;;
         --check) CHECK_ONLY=1 ;;
         --no-build) NO_BUILD=1 ;;
-        -h|--help) sed -n '2,18p' "$0"; exit 0 ;;
+        --local) LOCAL=1 ;;
+        -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
         *) echo "未知参数: $arg" >&2; exit 2 ;;
     esac
 done
@@ -120,12 +123,55 @@ if [ "$FORCE" != "1" ] && [ "$HAVE_BYTES" -ge "$MIN_BYTES" ] 2>/dev/null; then
     exit 0
 fi
 
-# ------------------------------------------------------------------ 环境与镜像
-command -v docker >/dev/null 2>&1 || {
-    die "本机没有 docker 命令。
-  · 想在宿主机构建镜像：在装了 docker 的宿主机上跑本脚本；
-  · 只想下权重：pip install modelscope && modelscope download --model ${MODEL_ID} --local_dir ${TARGET}"
+# ------------------------------------------------------------------ 选下载方式
+# 容器内一般没有 docker：直接走本机 venv，别让用户去宿主机绕一圈
+if [ "$LOCAL" != "1" ] && ! command -v docker >/dev/null 2>&1; then
+    LOCAL=1
+    warn "未检测到 docker → 改用本机 modelscope 下载（自动创建 .venv-weights）"
+fi
+
+# 本机下载：建一个只装 modelscope 的小 venv，不污染其它环境
+download_local() {
+    local uv_bin="${UV_BIN:-$(command -v uv || echo "${HOME:-/root}/.local/bin/uv")}"
+    local cli=""
+
+    if command -v "$uv_bin" >/dev/null 2>&1 || [ -x "$uv_bin" ]; then
+        if [ ! -x ".venv-weights/bin/python" ]; then
+            log "创建 .venv-weights（CPython 3.12，只装 modelscope）"
+            "$uv_bin" venv --python 3.12 .venv-weights
+        fi
+        if ! ./.venv-weights/bin/python -c "import modelscope" >/dev/null 2>&1; then
+            log "安装 modelscope==${MODELSCOPE_VERSION}（约几十 MB）"
+            "$uv_bin" pip install --python .venv-weights/bin/python \
+                "modelscope==${MODELSCOPE_VERSION}" 2>&1 | tail -3
+        fi
+        cli="./.venv-weights/bin/modelscope"
+    elif command -v modelscope >/dev/null 2>&1; then
+        cli="$(command -v modelscope)"
+    else
+        die "本机既没有 docker 也没有 uv/modelscope。
+  装 uv：curl -LsSf https://astral.sh/uv/install.sh | sh
+  或直接：pip install modelscope==${MODELSCOPE_VERSION} && modelscope download --model ${MODEL_ID} --local_dir ${TARGET}"
+    fi
+
+    log "开始下载（modelscope 直连，21GB，视带宽约 10~60 分钟；中断可重跑续传）"
+    local args=(download --model "$MODEL_ID" --revision "$MODEL_REVISION"
+                --local_dir "$TARGET" --max-workers "$DOWNLOAD_WORKERS")
+    [ "$FORCE" = "1" ] && args+=(--force)
+    "$cli" "${args[@]}"
 }
+
+if [ "$LOCAL" = "1" ]; then
+    download_local
+    after_bytes="$(host_weight_bytes || echo 0)"
+    if [ "${after_bytes:-0}" -lt "$MIN_BYTES" ] 2>/dev/null; then
+        die "下载后校验未通过：$(awk -v b="${after_bytes:-0}" 'BEGIN{printf "%.2f GB", b/1e9}') < 下限 $(awk -v b="$MIN_BYTES" 'BEGIN{printf "%.2f GB", b/1e9}')。可重跑本脚本续传。"
+    fi
+    log "完成：${TARGET}（$(awk -v b="$after_bytes" 'BEGIN{printf "%.2f GB", b/1e9}')）"
+    log "下一步：确保 .env 里 MODEL_PATH=./weight/${WEIGHT_BASENAME}，然后 bash scripts/start_all.sh"
+    exit 0
+fi
+
 docker info >/dev/null 2>&1 || die "docker 守护进程不可用（权限不足？sudo usermod -aG docker \$USER）"
 
 if [ "$NO_BUILD" = "1" ]; then
