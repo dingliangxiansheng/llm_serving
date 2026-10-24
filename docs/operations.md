@@ -93,6 +93,34 @@ docker run --rm -v llm-serving_webui-data:/data -v $PWD:/backup alpine \
 
 建议 cron：每天 03:00 备份两个库，保留 14 天。
 
+## 3.1 改 / 重置管理员密码
+
+`.env` 里的 `WEBUI_ADMIN_EMAIL/PASSWORD` **只在首次启动建号时生效**，之后改它不会改已有账号。
+两种情况：
+
+```bash
+# ① 知道原密码：走 Open WebUI 接口（把 <旧> <新> 换成实际值）
+curl -s -X POST http://127.0.0.1:8080/api/v1/auths/update/password \
+  -H 'Content-Type: application/json' -d '{"password":"<新密码>"}' \
+  -H "Authorization: Bearer $(curl -s -X POST http://127.0.0.1:8080/api/v1/auths/signin \
+      -H 'Content-Type: application/json' -d '{"email":"admin@example.com","password":"<旧密码>"}' \
+      | python3 -c 'import json,sys;print(json.load(sys.stdin)["token"])')"
+
+# ② 忘记密码：直接改 webui.db 里的 bcrypt 哈希（先停 WebUI，避免写冲突）
+pkill -f "[.]venv-webui/bin/open-webui"
+.venv-webui/bin/python - <<'EOF'
+import sqlite3, bcrypt
+h = bcrypt.hashpw(b"123456", bcrypt.gensalt(rounds=12)).decode()
+con = sqlite3.connect("data/webui.db")
+con.execute("update auth set password=? where email='admin@example.com'", (h,))
+con.commit(); con.close(); print("ok")
+EOF
+setsid nohup ./scripts/start_webui.sh > logs/webui.log 2>&1 &   # 再起
+```
+
+> 生产环境别用弱口令：`123456` 只是演示/内网临时值，`WEBUI_ENABLE_SIGNUP=false` 且网关只绑
+> `127.0.0.1` 时风险可控，但一旦对外必须换成强密码并启用 HTTPS。
+
 ## 4. 清理与容量
 
 ```bash
