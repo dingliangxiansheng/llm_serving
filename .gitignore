@@ -1,0 +1,27 @@
+# 忽略规则（权重 21GB、虚拟环境、运行数据都不入库）
+weight/
+*.CLAUDE.md
+*.safetensors
+*.bin
+*.pt
+*.gguf
+
+.venv*/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+build/
+dist/
+
+.env
+.env.local
+data/
+logs/
+*.log
+.cache/
+
+.DS_Store
+.idea/
+.vscode/

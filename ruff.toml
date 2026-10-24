@@ -1,0 +1,39 @@
+# ruff 配置：固定规则集，避免不同版本的 ruff 默认集不一致导致「昨天绿今天红」。
+line-length = 100
+target-version = "py312"
+src = ["gateway", "tests"]
+
+[lint]
+select = [
+  "E",    # pycodestyle
+  "F",    # pyflakes
+  "W",    # pycodestyle warnings
+  "I",    # isort
+  "UP",   # pyupgrade
+  "B",    # bugbear
+  "C4",   # comprehensions
+  "SIM",  # simplify
+  "RUF",  # ruff 自有规则
+  "S",    # bandit（安全）
+  "ASYNC",
+  "TRY",
+]
+# RUF001/2/3 是「全角标点/易混淆字符」，本工程注释与文案全中文，属于预期，不启用。
+ignore = [
+  "RUF001", "RUF002", "RUF003",  # 中文注释/文案里的全角标点属预期
+  "TRY003",   # 抛异常时带中文长消息是刻意的
+  "SIM108",   # 三元表达式不一定更好读
+  "S104",     # 服务要监听 0.0.0.0（内网/容器），由防火墙与端口绑定控制
+]
+
+[lint.per-file-ignores]
+# FastAPI 的 Depends/Header 默认值惯用法，B008 是已知误报
+"gateway/api/*.py" = ["B008"]
+# 测试里用 assert 是 pytest 的正常写法
+"tests/*.py" = ["S101", "S105", "S106"]
+
+[lint.isort]
+known-first-party = ["gateway"]
+
+[format]
+quote-style = "double"

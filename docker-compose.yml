@@ -1,0 +1,158 @@
+# =============================================================================
+# 一键部署：vLLM(推理) + gateway(多用户/历史/记忆) + Open WebUI(前端)
+# 用法：cp .env.example .env && 改 MODEL_PATH / 密钥，然后
+#       ./scripts/docker_up.sh      （等价于 docker compose up -d --build）
+# 注意：vLLM 与 Open WebUI 均以 HTTP 暴露，默认只把 gateway/vLLM 绑在 127.0.0.1
+# =============================================================================
+name: llm-serving
+
+services:
+  # ------------------------------------------- 权重下载（一次性任务，不常驻）
+  # 把 21GB INT4 权重用 modelscope 拉到宿主机 ./weight/<模型名>，再只读挂载给 vLLM。
+  # 单独执行：docker compose --profile tools run --rm weights
+  # 或：      bash scripts/fetch_weight.sh          （推荐，带路径推导与完整性校验）
+  # 权重已在本地时这个服务用不到，up 默认也不会启动它（profiles: tools）。
+  weights:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.weights
+      args:
+        MODELSCOPE_VERSION: ${MODELSCOPE_VERSION:-1.40.2}
+    image: llm-serving-weights:${IMAGE_TAG:-1.0.0}
+    # 用 profile 隔离：默认 up 不会启动它，避免每次部署都重跑一遍下载
+    profiles: ["tools"]
+    environment:
+      TZ: Asia/Shanghai
+      MODEL_ID: ${MODEL_ID:-cyankiwi/Qwen3.8-27B-AWQ-INT4}
+      MODEL_REVISION: ${MODEL_REVISION:-master}
+      # 容器内路径：对应下面 ./weight 的挂载，最终落在宿主机 ./weight/<名字>
+      LOCAL_DIR: /weight/${WEIGHT_NAME:-Qwen3.8-27B-AWQ-INT4}
+      DOWNLOAD_WORKERS: ${DOWNLOAD_WORKERS:-8}
+      WEIGHT_MIN_BYTES: ${WEIGHT_MIN_BYTES:-19000000000}
+      FORCE: ${WEIGHT_FORCE:-0}
+      # 内网代理/镜像站（没设就留空，不会生效）
+      HTTP_PROXY: ${HTTP_PROXY:-}
+      HTTPS_PROXY: ${HTTPS_PROXY:-}
+      NO_PROXY: ${NO_PROXY:-}
+      MODELSCOPE_DOMAIN: ${MODELSCOPE_DOMAIN:-}
+    volumes:
+      # 挂父目录而不是具体模型目录：MODEL_PATH 指向 ./weight 下哪个子目录，下载位置都跟着对齐
+      - ./weight:/weight
+    restart: "no"
+
+  # ---------------------------------------------------------------- vLLM 推理
+  vllm:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.vllm
+      args:
+        VLLM_VERSION: ${VLLM_VERSION:-0.31.0}
+    image: llm-serving-vllm:${IMAGE_TAG:-1.0.0}
+    container_name: llm-serving-vllm
+    restart: unless-stopped
+    ipc: host
+    shm_size: "16gb"
+    environment:
+      TZ: Asia/Shanghai
+      MODEL_PATH: /models
+      SERVED_MODEL_NAME: ${SERVED_MODEL_NAME:-qwen3.8-27b}
+      TENSOR_PARALLEL_SIZE: ${TENSOR_PARALLEL_SIZE:-4}
+      GPU_MEMORY_UTILIZATION: ${GPU_MEMORY_UTILIZATION:-0.90}
+      MAX_MODEL_LEN: ${MAX_MODEL_LEN:-32768}
+      MAX_NUM_SEQS: ${MAX_NUM_SEQS:-16}
+      VLLM_EXTRA_ARGS: ${VLLM_EXTRA_ARGS:-}
+      HF_HUB_OFFLINE: ${HF_HUB_OFFLINE:-1}
+      VLLM_LOGGING_LEVEL: ${VLLM_LOGGING_LEVEL:-INFO}
+    volumes:
+      - ${MODEL_PATH:?请先在 .env 中设置 MODEL_PATH 指向权重目录}:/models:ro
+      - ${HF_CACHE_DIR:-./data/hf}:/root/.cache/huggingface
+    ports:
+      - "127.0.0.1:${VLLM_PORT:-8000}:8000"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          python3 -c "import sys,urllib.request;
+          sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).status == 200 else 1)"
+      interval: 30s
+      timeout: 10s
+      # 21GB 权重加载 + 显存 profiling 通常 2~5 分钟，给足启动时间
+      start_period: 900s
+      retries: 10
+
+  # ------------------------------------------------------- 网关（多用户/记忆）
+  gateway:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.gateway
+    image: llm-serving-gateway:${IMAGE_TAG:-1.0.0}
+    container_name: llm-serving-gateway
+    restart: unless-stopped
+    depends_on:
+      vllm:
+        condition: service_healthy
+    environment:
+      TZ: Asia/Shanghai
+      QIANWEN_UPSTREAM__BASE_URL: http://vllm:8000/v1
+      QIANWEN_UPSTREAM__MODEL: ${SERVED_MODEL_NAME:-qwen3.8-27b}
+      QIANWEN_UPSTREAM__REQUEST_TIMEOUT_S: ${UPSTREAM_TIMEOUT_S:-600}
+      QIANWEN_AUTH__MODE: ${AUTH_MODE:-header}
+      QIANWEN_AUTH__ADMIN_TOKEN: ${ADMIN_TOKEN:-}
+      QIANWEN_HISTORY__MAX_TURNS: ${GATEWAY_HISTORY_MAX_TURNS:-20}
+      QIANWEN_HISTORY__MAX_PROMPT_TOKENS: ${GATEWAY_MAX_PROMPT_TOKENS:-24576}
+      QIANWEN_MEMORY__INJECT_TOP_K: ${GATEWAY_MEMORY_TOP_K:-5}
+      QIANWEN_MEMORY__EXTRACT_MODE: ${GATEWAY_MEMORY_EXTRACT_MODE:-llm}
+      QIANWEN_LIMITS__MAX_CONCURRENT: ${GATEWAY_MAX_CONCURRENT:-4}
+      QIANWEN_LIMITS__QUEUE_TIMEOUT_S: ${GATEWAY_QUEUE_TIMEOUT_S:-60}
+      QIANWEN_LIMITS__RPM_PER_USER: ${GATEWAY_RPM_PER_USER:-60}
+      QIANWEN_LIMITS__DAILY_TOKEN_QUOTA: ${GATEWAY_DAILY_TOKEN_QUOTA:-0}
+      QIANWEN_STORAGE__DB_PATH: /data/gateway.db
+    volumes:
+      - gateway-data:/data
+    ports:
+      - "127.0.0.1:${GATEWAY_PORT:-9000}:9000"
+
+  # ---------------------------------------------------------------- 前端
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:${WEBUI_VERSION:-v0.12.3}
+    container_name: llm-serving-webui
+    restart: unless-stopped
+    depends_on:
+      gateway:
+        condition: service_healthy
+    environment:
+      TZ: Asia/Shanghai
+      # 指向网关，而不是 vLLM：历史/记忆/限额都在网关里做
+      OPENAI_API_BASE_URLS: http://gateway:9000/v1
+      OPENAI_API_KEYS: ${GATEWAY_API_KEY:-sk-llm-serving-internal}
+      ENABLE_OPENAI_API: "true"
+      ENABLE_OLLAMA_API: "false"
+      # 关键：把登录用户身份透传给网关（默认关闭，关掉就所有人都变成同一个匿名用户）
+      ENABLE_FORWARD_USER_INFO_HEADERS: "true"
+      WEBUI_AUTH: ${WEBUI_AUTH:-true}
+      WEBUI_SECRET_KEY: ${WEBUI_SECRET_KEY:?请设置 WEBUI_SECRET_KEY（至少 32 位随机串）}
+      WEBUI_ADMIN_EMAIL: ${WEBUI_ADMIN_EMAIL:-admin@example.com}
+      WEBUI_ADMIN_PASSWORD: ${WEBUI_ADMIN_PASSWORD:-}
+      WEBUI_ADMIN_NAME: ${WEBUI_ADMIN_NAME:-管理员}
+      ENABLE_SIGNUP: ${WEBUI_ENABLE_SIGNUP:-false}
+      DEFAULT_MODELS: ${SERVED_MODEL_NAME:-qwen3.8-27b}
+      DATA_DIR: /app/backend/data
+      HF_HUB_OFFLINE: "1"
+      ENABLE_VERSION_CHECK: "false"
+    volumes:
+      - webui-data:/app/backend/data
+      # 站点署名（作者：丁亮 · 仅供本次演示使用）：Open WebUI 会加载 /static/custom.css
+      - ./webui/branding/custom.css:/app/backend/open_webui/frontend/static/custom.css:ro
+    ports:
+      - "${WEBUI_BIND:-0.0.0.0}:${WEBUI_PORT:-8080}:8080"
+
+volumes:
+  gateway-data:
+  webui-data:

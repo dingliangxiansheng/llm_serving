@@ -1,0 +1,59 @@
+# =============================================================================
+# 网关基线配置（YAML 为最低优先级；环境变量 QIANWEN_* 可逐项覆盖）
+# 例：QIANWEN_LIMITS__MAX_CONCURRENT=6
+# =============================================================================
+
+server:
+  host: 0.0.0.0
+  port: 9000
+  log_level: info
+
+upstream:
+  # vLLM 的 OpenAI 兼容入口（容器内用服务名 vllm）
+  base_url: http://127.0.0.1:8000/v1
+  api_key: ""            # vLLM 启动了 --api-key 时填同一个值
+  model: qwen3.8-27b     # 必须与 vLLM 的 --served-model-name 一致
+  request_timeout_s: 600 # 长文生成 + 排队，别太小
+  connect_timeout_s: 15
+
+auth:
+  # header：信任 Open WebUI 反代的用户头（推荐，内网）
+  # shared：所有人共用一个身份（单人或压测）
+  # off   ：不鉴权（仅本机调试）
+  mode: header
+  api_keys: []           # 非空时要求 Authorization: Bearer <key>
+  admin_token: ""        # /admin/* 的口令，留空即禁用管理接口
+  header_user_id: X-OpenWebUI-User-Id
+  header_user_email: X-OpenWebUI-User-Email
+  header_user_name: X-OpenWebUI-User-Name
+  header_user_role: X-OpenWebUI-User-Role
+  header_chat_id: X-OpenWebUI-Chat-Id
+  default_user_id: anonymous
+  default_user_name: 匿名用户
+
+history:
+  enabled: true
+  max_turns: 20          # 送入上游的最大轮数（1 轮 = 用户 + 助手）
+  max_prompt_tokens: 24576
+  store_assistant: true
+
+memory:
+  enabled: true
+  inject_top_k: 5
+  min_score: 0.12
+  max_inject_tokens: 600
+  extract_mode: llm      # llm | heuristic | off
+  extract_max_memories: 3
+  extract_min_chars: 8
+  max_per_user: 500
+  dedup_similarity: 0.9
+  recency_half_life_days: 180
+
+limits:
+  max_concurrent: 4      # 等于 vLLM 的 --max-num-seqs，别超过它
+  queue_timeout_s: 60
+  rpm_per_user: 60
+  daily_token_quota: 0   # 0 = 不限；按人限流可设 200000
+
+storage:
+  db_path: data/gateway.db

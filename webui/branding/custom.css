@@ -1,0 +1,51 @@
+/* =============================================================================
+ * 站点署名（本仓库维护的自定义样式）
+ *
+ * Open WebUI 的 SPA 模板会加载 /static/custom.css（见
+ * open_webui/frontend/index.html 里的 <link rel="stylesheet" href="/static/custom.css">），
+ * 这是官方留出的样式覆盖入口。因此这里用 CSS 伪元素追加一行小字，
+ * 不修改前端构建产物，也不触碰 Open WebUI 的品牌资源（见 static/BRANDING.md）。
+ *
+ * 安装方式：
+ *   - 本机 venv：bash scripts/patch_webui_branding.sh
+ *   - Docker：docker-compose.yml 已把本文件只读挂载到容器的 static/custom.css
+ * ========================================================================== */
+
+body::after {
+  content: "作者：丁亮 · 仅供本次演示使用";
+  position: fixed;
+  right: 14px;
+  bottom: 6px;
+  z-index: 1;
+  font-size: 11px;
+  line-height: 1.2;
+  letter-spacing: 0.02em;
+  color: rgba(115, 115, 115, 0.8);
+  pointer-events: none;
+  user-select: none;
+}
+
+/* 暗色主题下提高对比度，避免灰字看不见 */
+@media (prefers-color-scheme: dark) {
+  body::after {
+    color: rgba(163, 163, 163, 0.75);
+  }
+}
+
+/* 窄屏（手机）缩小一点，避免压住输入框右下角 */
+@media (max-width: 640px) {
+  body::after {
+    right: 8px;
+    bottom: 4px;
+    font-size: 10px;
+    letter-spacing: 0;
+    opacity: 0.72;
+  }
+}
+
+/* 打印/导出时不出现署名 */
+@media print {
+  body::after {
+    display: none;
+  }
+}

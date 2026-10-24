@@ -1,0 +1,5 @@
+# 开发/测试依赖（-r 引入运行时依赖）
+-r requirements-gateway.txt
+pytest>=8.0
+pytest-asyncio>=0.23
+ruff>=0.6

@@ -1,0 +1,20 @@
+# =============================================================================
+# vLLM 镜像：以官方 vllm/vllm-openai 为基础，只叠加启动脚本
+# 官方镜像已带匹配的 CUDA / torch / transformers，避免自建时长与版本坑
+# 构建（仓库根目录执行）：docker build -f docker/Dockerfile.vllm -t llm-serving-vllm:1.0.0 .
+# =============================================================================
+ARG VLLM_VERSION=0.31.0
+FROM vllm/vllm-openai:v${VLLM_VERSION}
+
+ENV HF_HUB_OFFLINE=1 \
+    VLLM_LOGGING_LEVEL=INFO \
+    VLLM_WORKER_MULTIPROC_METHOD=spawn \
+    TZ=Asia/Shanghai
+
+# 模型通过 compose 只读挂载进容器，不在镜像里拷贝 21GB 权重
+COPY docker/scripts/vllm_entrypoint.sh /usr/local/bin/vllm_entrypoint.sh
+RUN chmod +x /usr/local/bin/vllm_entrypoint.sh
+
+EXPOSE 8000
+
+ENTRYPOINT ["/usr/local/bin/vllm_entrypoint.sh"]

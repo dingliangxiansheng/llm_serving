@@ -1,0 +1,15 @@
+# 构建上下文排除项：21GB 权重、venv、日志、本地数据都不进镜像
+weight/
+.venv*/
+logs/
+data/
+.git/
+.gitignore
+.pytest_cache/
+__pycache__/
+*.pyc
+*.egg-info/
+docs/
+tests/
+.env
+*.log

@@ -1,0 +1,42 @@
+# =============================================================================
+# 网关镜像：只装 OpenAI 兼容代理所需的轻量依赖（约 200MB）
+# 构建（仓库根目录执行）：docker build -f docker/Dockerfile.gateway -t llm-serving-gateway:1.0.0 .
+# =============================================================================
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    TZ=Asia/Shanghai
+
+# curl 用于 compose healthcheck，tini 负责转发信号（避免 SIGTERM 丢失僵尸进程）
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl tini \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY requirements-gateway.txt /tmp/requirements-gateway.txt
+RUN pip install --no-cache-dir -r /tmp/requirements-gateway.txt \
+    && rm -f /tmp/requirements-gateway.txt
+
+# 代码（顺序按变更频率排列，便于命中构建缓存）
+COPY gateway/ /app/gateway/
+COPY configs/ /app/configs/
+COPY docker/scripts/gateway_entrypoint.sh /usr/local/bin/gateway_entrypoint.sh
+RUN chmod +x /usr/local/bin/gateway_entrypoint.sh
+
+# 数据目录：SQLite 库落在 /data/gateway.db，由 compose 挂载卷持久化
+ENV QIANWEN_CONFIG=/app/configs/gateway.yaml \
+    QIANWEN_STORAGE__DB_PATH=/data/gateway.db \
+    QIANWEN_SERVER__HOST=0.0.0.0 \
+    QIANWEN_SERVER__PORT=9000
+RUN mkdir -p /data && useradd -m -u 10001 gateway && chown -R gateway:gateway /app /data
+USER gateway
+
+EXPOSE 9000
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD curl -fsS http://127.0.0.1:9000/healthz || exit 1
+
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/gateway_entrypoint.sh"]

@@ -1,0 +1,46 @@
+# =============================================================================
+# 权重下载镜像：用 modelscope 把 21GB INT4 权重拉到宿主机的 ./weight/<模型名> 下
+#
+# 为什么单独做一个镜像：docker build 不能往宿主机写文件，所以把「下载器」做成镜像，
+# 运行时把宿主机 ./weight 目录 bind-mount 进去，下载结果直接落在宿主机上，
+# 既能进 docker compose 编排，又不会把 21GB 权重烤进 vLLM 镜像。
+#
+# 构建（仓库根目录执行）：
+#   docker build -f docker/Dockerfile.weights -t llm-serving-weights:1.0.0 .
+# 运行（推荐用脚本，会自动算路径/跳过已下载/校验完整性）：
+#   bash scripts/fetch_weight.sh
+# =============================================================================
+ARG PYTHON_VERSION=3.12
+FROM python:${PYTHON_VERSION}-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    TZ=Asia/Shanghai
+
+# ca-certificates：modelscope 走 HTTPS；tzdata：日志时间与内网一致
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates tzdata \
+    && rm -rf /var/lib/apt/lists/*
+
+# modelscope 只用来下载，不需要 torch/transformers（省几百 MB 与构建时间）
+ARG MODELSCOPE_VERSION=1.40.2
+RUN pip install --no-cache-dir "modelscope==${MODELSCOPE_VERSION}"
+
+# 下载器入口：校验目录 -> 判断是否已完整 -> modelscope download -> 校验分片
+COPY docker/scripts/fetch_weight_entrypoint.sh /usr/local/bin/fetch_weight_entrypoint.sh
+RUN chmod +x /usr/local/bin/fetch_weight_entrypoint.sh
+
+# 默认值均可在 docker run -e / compose 里覆盖
+ENV MODEL_ID=cyankiwi/Qwen3.8-27B-AWQ-INT4 \
+    MODEL_REVISION=master \
+    LOCAL_DIR=/weight/Qwen3.8-27B-AWQ-INT4 \
+    DOWNLOAD_WORKERS=8 \
+    WEIGHT_MIN_BYTES=19000000000 \
+    FORCE=0 \
+    VERIFY_ONLY=0
+
+VOLUME ["/weight"]
+
+ENTRYPOINT ["/usr/local/bin/fetch_weight_entrypoint.sh"]
