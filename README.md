@@ -144,7 +144,7 @@ bash scripts/bootstrap.sh --no-weight  # 只要环境，权重另想办法（离
 （只装 modelscope，不污染其它环境），中断后重跑逐文件续传。等价的手工步骤：
 
 ```bash
-./scripts/install.sh              # 建 .venv-vllm(3.12) / .venv-gateway(3.12) / .venv-webui(3.11)
+./scripts/install.sh              # 建三个 venv（复用本机 >=3.11 解释器，不会去 GitHub 下 CPython）
 cp .env.example .env              # 按需修改
 ./scripts/fetch_weight.sh         # 下权重（容器内自动 --local 模式）
 
@@ -161,6 +161,33 @@ bash scripts/stop_all.sh --gpu    # 全部停止并确认显存释放
 ./scripts/start_webui.sh    # 终端 3，默认 8080
 ```
 
+### 内网 / 容器环境（会踩的坑都在这儿）
+
+`uv` **不读 `pip.conf` 也不认 `PIP_INDEX_URL`**，所以装包慢/失败时按下面这些变量处理。
+`bootstrap.sh` 会自动探测 `pypi.org` / `github.com` 是否可达并注入，正常不用手设：
+
+| 变量 | 作用 | 实测可用值 |
+| --- | --- | --- |
+| `UV_DEFAULT_INDEX` | uv 的包索引 | `https://mirrors.aliyun.com/pypi/simple` |
+| `UV_PYTHON_INSTALL_MIRROR` | uv 下载 CPython 的镜像 | `https://gh-proxy.com/https://github.com/astral-sh/python-build-standalone/releases/download`（时通时不通） |
+| `UV_HTTP_TIMEOUT` | 防长时间无响应 | `60` |
+| `UV_BIN` | 指定现成的 uv | `/root/miniconda3/bin/uv` |
+
+```bash
+# 国内网络最快的一条路：uv 用 pip 装（wheel 走镜像，17MB 秒级）
+python3 -m pip install uv
+
+# 容器里没有 docker 守护进程 → 权重必须用本机模式
+bash scripts/fetch_weight.sh --local
+
+# .env 的显存四项按本机 GPU 重算（install.sh 末尾会自动调用一次）
+bash scripts/tune_env.sh --dry-run     # 只看会改成什么
+SKIP_TUNE=1 bash scripts/bootstrap.sh  # 完全跳过自动调参
+```
+
+> 判断「有没有 docker」不能只看 `command -v docker`：容器里常只有客户端、
+> 没有 `/var/run/docker.sock`。脚本现在会同时校验 `docker info`。
+
 ---
 
 ## 配置要点（完整项见 `.env.example` 与 `configs/gateway.yaml`）
@@ -169,8 +196,8 @@ bash scripts/stop_all.sh --gpu    # 全部停止并确认显存释放
 | --- | --- | --- |
 | `MODEL_PATH` | `./weight/Qwen3.8-27B-AWQ-INT4` | 权重目录（相对仓库根；compose 只读挂载） |
 | `MODEL_ID` | `cyankiwi/Qwen3.8-27B-AWQ-INT4` | modelscope 下载的模型仓库 |
-| `TENSOR_PARALLEL_SIZE` | `4` | **2 卡装不下 21GB 权重，必须 4 卡** |
-| `GPU_MEMORY_UTILIZATION` | `0.33` | 当前机器每卡被占 15GB；独占后可提到 0.9 |
+| `TENSOR_PARALLEL_SIZE` | `4` | 每层权重切几份；必须 ≤ GPU 数且整除 `num_kv_heads`(本模型=4)。**该值会被 `scripts/tune_env.sh` 按本机 GPU 自动改写** |
+| `GPU_MEMORY_UTILIZATION` | `0.33` | 单卡可用比例；必须满足 `util×显存 > 权重/TP`。0.33 是「4×4090 且每卡被占 15GB」那台的值，**换机器会被自动重算** |
 | `MAX_MODEL_LEN` | `8192` | 上下文；显存够可 32768 |
 | `MAX_NUM_SEQS` | `4` | vLLM 侧并发；与网关 `GATEWAY_MAX_CONCURRENT` 对齐 |
 | `GATEWAY_MAX_PROMPT_TOKENS` | `6144` | **必须小于 `MAX_MODEL_LEN`** |

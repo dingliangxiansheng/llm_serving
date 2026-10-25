@@ -124,10 +124,21 @@ if [ "$FORCE" != "1" ] && [ "$HAVE_BYTES" -ge "$MIN_BYTES" ] 2>/dev/null; then
 fi
 
 # ------------------------------------------------------------------ 选下载方式
-# 容器内一般没有 docker：直接走本机 venv，别让用户去宿主机绕一圈
-if [ "$LOCAL" != "1" ] && ! command -v docker >/dev/null 2>&1; then
+# 容器内一般没有 docker：直接走本机 venv，别让用户去宿主机绕一圈。
+# 注意必须同时检测「守护进程」：容器里经常装了 docker 客户端却没有 /var/run/docker.sock，
+# 只测 command -v docker 会走进下面的容器分支，最后在 docker info 那里报一句误导性的
+# 「权限不足？sudo usermod -aG docker」。
+docker_usable() {
+    command -v docker >/dev/null 2>&1 || return 1
+    docker info >/dev/null 2>&1
+}
+if [ "$LOCAL" != "1" ] && ! docker_usable; then
     LOCAL=1
-    warn "未检测到 docker → 改用本机 modelscope 下载（自动创建 .venv-weights）"
+    if command -v docker >/dev/null 2>&1; then
+        warn "docker 客户端在，但守护进程不可用（容器内典型情况）→ 改用本机 modelscope 下载"
+    else
+        warn "未检测到 docker → 改用本机 modelscope 下载（自动创建 .venv-weights）"
+    fi
 fi
 
 # 本机下载：建一个只装 modelscope 的小 venv，不污染其它环境
@@ -137,20 +148,28 @@ download_local() {
 
     if command -v "$uv_bin" >/dev/null 2>&1 || [ -x "$uv_bin" ]; then
         if [ ! -x ".venv-weights/bin/python" ]; then
-            log "创建 .venv-weights（CPython 3.12，只装 modelscope）"
-            "$uv_bin" venv --python 3.12 .venv-weights
+            # 复用本机 >=3.11 解释器，别让 uv 去 GitHub 下 CPython（内网会卡很久）
+            local py_args=() c path
+            for c in python3.13 python3.12 python3.11 python3; do
+                path="$(command -v "$c" 2>/dev/null)" || continue
+                if "$path" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)' 2>/dev/null; then
+                    py_args=(--python "$path" --python-preference only-system); break
+                fi
+            done
+            log "创建 .venv-weights（只装 modelscope）"
+            "$uv_bin" venv "${py_args[@]}" .venv-weights
         fi
         if ! ./.venv-weights/bin/python -c "import modelscope" >/dev/null 2>&1; then
             log "安装 modelscope==${MODELSCOPE_VERSION}（约几十 MB）"
             "$uv_bin" pip install --python .venv-weights/bin/python \
-                "modelscope==${MODELSCOPE_VERSION}" 2>&1 | tail -3
+                "modelscope==${MODELSCOPE_VERSION}" 2>&1 | tee -a logs/install-weights.log
         fi
         cli="./.venv-weights/bin/modelscope"
     elif command -v modelscope >/dev/null 2>&1; then
         cli="$(command -v modelscope)"
     else
         die "本机既没有 docker 也没有 uv/modelscope。
-  装 uv：curl -LsSf https://astral.sh/uv/install.sh | sh
+  装 uv：python3 -m pip install uv            # 国内镜像，最快
   或直接：pip install modelscope==${MODELSCOPE_VERSION} && modelscope download --model ${MODEL_ID} --local_dir ${TARGET}"
     fi
 
@@ -172,7 +191,8 @@ if [ "$LOCAL" = "1" ]; then
     exit 0
 fi
 
-docker info >/dev/null 2>&1 || die "docker 守护进程不可用（权限不足？sudo usermod -aG docker \$USER）"
+docker info >/dev/null 2>&1 || die "docker 守护进程不可用。容器内请改用：bash scripts/fetch_weight.sh --local
+  宿主机上若确实是权限问题：sudo usermod -aG docker \$USER 后重新登录"
 
 if [ "$NO_BUILD" = "1" ]; then
     docker image inspect "$IMAGE" >/dev/null 2>&1 || die "镜像 $IMAGE 不存在，去掉 --no-build 先构建"

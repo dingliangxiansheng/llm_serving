@@ -16,6 +16,7 @@ build/
 dist/
 
 .env
+.env.bak
 .env.local
 data/
 logs/
